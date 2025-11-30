@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WattRoute Backend Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2563eb;
+            margin-top: 0;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f9fafb;
+            border-radius: 8px;
+            border-left: 4px solid #2563eb;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        button {
+            background: #2563eb;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #1d4ed8;
+        }
+        button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .success {
+            background: #d1fae5;
+            border: 1px solid #10b981;
+            color: #065f46;
+        }
+        .error {
+            background: #fee2e2;
+            border: 1px solid #ef4444;
+            color: #991b1b;
+        }
+        .loading {
+            background: #dbeafe;
+            border: 1px solid #3b82f6;
+            color: #1e40af;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-ok { background: #10b981; }
+        .status-error { background: #ef4444; }
+        .status-loading { background: #f59e0b; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚗⚡ WattRoute Backend Test</h1>
+        <p>Use this page to test your backend API is working correctly.</p>
+
+        <!-- Backend URL Configuration -->
+        <div class="test-section">
+            <h2>1. Backend URL</h2>
+            <p>Enter your deployed backend URL:</p>
+            <input type="text" id="backendUrl" placeholder="e.g., https://wattroute-backend.onrender.com" value="http://localhost:3001">
+            <small style="color: #6b7280;">Default is localhost:3001 for local testing</small>
+        </div>
+
+        <!-- Health Check Test -->
+        <div class="test-section">
+            <h2>2. Health Check Test</h2>
+            <p>Verify the backend server is running:</p>
+            <button onclick="testHealth()">Test Health Endpoint</button>
+            <div id="healthResult"></div>
+        </div>
+
+        <!-- Directions API Test -->
+        <div class="test-section">
+            <h2>3. Directions API Test</h2>
+            <p>Test real Google Maps route calculation:</p>
+            <input type="text" id="origin" placeholder="Origin (e.g., London, UK)" value="London, UK">
+            <input type="text" id="destination" placeholder="Destination (e.g., Manchester, UK)" value="Manchester, UK">
+            <button onclick="testDirections()">Calculate Route</button>
+            <div id="directionsResult"></div>
+        </div>
+
+        <!-- Quick Troubleshooting -->
+        <div class="test-section">
+            <h2>🔍 Troubleshooting</h2>
+            <ul style="color: #4b5563; line-height: 1.8;">
+                <li><strong>Connection refused:</strong> Backend is not running or wrong URL</li>
+                <li><strong>CORS error:</strong> Backend needs to allow your domain in CORS settings</li>
+                <li><strong>API key error:</strong> Check GOOGLE_MAPS_API_KEY environment variable</li>
+                <li><strong>No route found:</strong> Check origin/destination are valid addresses</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        function getBackendUrl() {
+            return document.getElementById('backendUrl').value.replace(/\/$/, '');
+        }
+
+        function showResult(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="result ${type}">${message}</div>`;
+        }
+
+        async function testHealth() {
+            const resultDiv = document.getElementById('healthResult');
+            const backendUrl = getBackendUrl();
+
+            showResult('healthResult', '⏳ Testing connection...', 'loading');
+
+            try {
+                const response = await fetch(`${backendUrl}/health`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    showResult('healthResult', 
+                        `✅ SUCCESS!\n\nStatus: ${data.status}\nMessage: ${data.message}\n\nBackend is running correctly!`,
+                        'success'
+                    );
+                } else {
+                    showResult('healthResult', 
+                        `❌ ERROR\n\nStatus: ${response.status}\nResponse: ${JSON.stringify(data, null, 2)}`,
+                        'error'
+                    );
+                }
+            } catch (error) {
+                showResult('healthResult', 
+                    `❌ CONNECTION FAILED\n\nError: ${error.message}\n\nMake sure:\n- Backend URL is correct\n- Backend server is running\n- No CORS issues`,
+                    'error'
+                );
+            }
+        }
+
+        async function testDirections() {
+            const resultDiv = document.getElementById('directionsResult');
+            const backendUrl = getBackendUrl();
+            const origin = document.getElementById('origin').value;
+            const destination = document.getElementById('destination').value;
+
+            if (!origin || !destination) {
+                showResult('directionsResult', '❌ Please enter both origin and destination', 'error');
+                return;
+            }
+
+            showResult('directionsResult', '⏳ Calculating route with Google Maps...', 'loading');
+
+            try {
+                const response = await fetch(`${backendUrl}/api/directions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ origin, destination })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.status === 'OK') {
+                    const route = data.routes[0];
+                    const leg = route.legs[0];
+
+                    showResult('directionsResult', 
+                        `✅ ROUTE CALCULATED SUCCESSFULLY!\n\n` +
+                        `From: ${leg.start_address}\n` +
+                        `To: ${leg.end_address}\n\n` +
+                        `Distance: ${leg.distance.text}\n` +
+                        `Duration: ${leg.duration.text}\n` +
+                        `Duration (seconds): ${leg.duration.value}s\n\n` +
+                        `This is REAL data from Google Maps! 🎉\n\n` +
+                        `Route polyline length: ${route.overview_polyline.points.length} chars`,
+                        'success'
+                    );
+                } else {
+                    showResult('directionsResult', 
+                        `❌ API ERROR\n\n` +
+                        `Status: ${data.status || response.status}\n` +
+                        `Message: ${data.error_message || data.message || 'Unknown error'}\n\n` +
+                        `Full response:\n${JSON.stringify(data, null, 2)}`,
+                        'error'
+                    );
+                }
+            } catch (error) {
+                showResult('directionsResult', 
+                    `❌ REQUEST FAILED\n\n` +
+                    `Error: ${error.message}\n\n` +
+                    `Common causes:\n` +
+                    `- Backend is not running\n` +
+                    `- Wrong backend URL\n` +
+                    `- CORS not configured\n` +
+                    `- Network connection issue`,
+                    'error'
+                );
+            }
+        }
+
+        // Auto-test health on page load if using localhost
+        window.addEventListener('load', () => {
+            const backendUrl = getBackendUrl();
+            if (backendUrl.includes('localhost')) {
+                console.log('Auto-testing localhost backend...');
+                setTimeout(testHealth, 1000);
+            }
+        });
+    </script>
+</body>
+</html>
