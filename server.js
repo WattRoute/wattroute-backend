@@ -1,55 +1,42 @@
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Enable CORS for all origins (you can restrict this later)
+// Enable CORS
 app.use(cors());
 app.use(express.json());
 
-// Health check endpoint
+// Health check
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    message: 'WattRoute Backend is running!',
-    version: '2.0.0',
-    endpoints: ['/api/directions', '/api/charging-stations']
-  });
+  res.json({ status: 'ok', message: 'WattRoute Backend v2.1 running!' });
 });
 
-// ===========================================
+// ============================================
 // DIRECTIONS API - Google Maps
-// ===========================================
+// ============================================
 app.post('/api/directions', async (req, res) => {
   try {
     const { origin, destination, waypoints } = req.body;
     
     if (!origin || !destination) {
-      return res.status(400).json({ 
-        error: 'Missing required parameters: origin and destination' 
-      });
+      return res.status(400).json({ error: 'Missing origin or destination' });
     }
 
     const apiKey = process.env.GOOGLE_MAPS_API_KEY;
     if (!apiKey) {
-      return res.status(500).json({ 
-        error: 'Google Maps API key not configured on server' 
-      });
+      return res.status(500).json({ error: 'API key not configured' });
     }
 
-    // Build the Google Directions API URL
     let url = `https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&key=${apiKey}`;
     
-    // Add waypoints if provided
     if (waypoints && waypoints.length > 0) {
-      const waypointStr = waypoints.map(wp => encodeURIComponent(wp)).join('|');
-      url += `&waypoints=${waypointStr}`;
+      url += `&waypoints=${waypoints.map(wp => encodeURIComponent(wp)).join('|')}`;
     }
 
-    console.log('Fetching directions from Google...');
+    console.log('Fetching directions...');
     const response = await fetch(url);
     const data = await response.json();
 
@@ -61,11 +48,12 @@ app.post('/api/directions', async (req, res) => {
       });
     }
 
-    // Extract the route information
     const route = data.routes[0];
     const leg = route.legs[0];
 
-    const result = {
+    console.log(`Route: ${leg.distance.text}, ${leg.duration.text}`);
+    
+    res.json({
       success: true,
       route: {
         distance: leg.distance,
@@ -75,235 +63,103 @@ app.post('/api/directions', async (req, res) => {
         steps: leg.steps,
         overview_polyline: route.overview_polyline,
         bounds: route.bounds,
-        // Include all legs if there are waypoints
         legs: route.legs
-      },
-      // Include raw response for debugging
-      raw: data
-    };
-
-    console.log(`Route calculated: ${leg.distance.text}, ${leg.duration.text}`);
-    res.json(result);
-
-  } catch (error) {
-    console.error('Error fetching directions:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch directions', 
-      details: error.message 
-    });
-  }
-});
-
-// ===========================================
-// CHARGING STATIONS API - Open Charge Map
-// ===========================================
-app.get('/api/charging-stations', async (req, res) => {
-  try {
-    const { 
-      latitude, 
-      longitude, 
-      distance = 10, // km
-      maxresults = 50,
-      countrycode = 'GB',
-      usagetypeid,
-      levelid,
-      connectiontypeid
-    } = req.query;
-
-    if (!latitude || !longitude) {
-      return res.status(400).json({ 
-        error: 'Missing required parameters: latitude and longitude' 
-      });
-    }
-
-    // Build Open Charge Map API URL
-    let url = `https://api.openchargemap.io/v3/poi/?output=json&compact=true&verbose=false`;
-    url += `&latitude=${latitude}`;
-    url += `&longitude=${longitude}`;
-    url += `&distance=${distance}`;
-    url += `&distanceunit=KM`;
-    url += `&maxresults=${maxresults}`;
-    
-    if (countrycode) url += `&countrycode=${countrycode}`;
-    if (usagetypeid) url += `&usagetypeid=${usagetypeid}`;
-    if (levelid) url += `&levelid=${levelid}`;
-    if (connectiontypeid) url += `&connectiontypeid=${connectiontypeid}`;
-
-    // Add API key if you have one (optional for Open Charge Map)
-    const ocmKey = process.env.OPEN_CHARGE_MAP_API_KEY;
-    if (ocmKey) {
-      url += `&key=${ocmKey}`;
-    }
-
-    console.log('Fetching charging stations from Open Charge Map...');
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'WattRoute/2.0'
       }
     });
 
-    if (!response.ok) {
-      throw new Error(`Open Charge Map API error: ${response.status}`);
-    }
-
-    const stations = await response.json();
-    
-    console.log(`Found ${stations.length} charging stations`);
-    res.json({
-      success: true,
-      count: stations.length,
-      stations: stations
-    });
-
   } catch (error) {
-    console.error('Error fetching charging stations:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch charging stations', 
-      details: error.message 
-    });
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Failed to fetch directions', details: error.message });
   }
 });
 
-// ===========================================
-// CHARGING STATIONS ALONG ROUTE
-// ===========================================
-app.post('/api/charging-stations-along-route', async (req, res) => {
+// ============================================
+// CHARGING STATIONS API - Open Charge Map
+// ============================================
+app.get('/api/charging-stations', async (req, res) => {
   try {
-    const { 
-      polyline,
-      points, // Array of {lat, lng} points along route
-      distance = 5, // km from route
-      maxresults = 100,
-      countrycode = 'GB',
-      levelid // Filter by charger level (2=fast, 3=rapid)
-    } = req.body;
+    const { latitude, longitude, distance = 10, maxresults = 50, countrycode = 'GB', levelid } = req.query;
 
-    if (!points || points.length === 0) {
-      return res.status(400).json({ 
-        error: 'Missing required parameter: points (array of coordinates along route)' 
-      });
+    if (!latitude || !longitude) {
+      return res.status(400).json({ error: 'Missing latitude or longitude' });
     }
 
-    // Sample points along the route (every 50km or so)
+    let url = `https://api.openchargemap.io/v3/poi/?output=json&compact=true&verbose=false`;
+    url += `&latitude=${latitude}&longitude=${longitude}`;
+    url += `&distance=${distance}&distanceunit=KM&maxresults=${maxresults}`;
+    url += `&countrycode=${countrycode}`;
+    if (levelid) url += `&levelid=${levelid}`;
+
+    console.log('Fetching charging stations...');
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'WattRoute/2.0' }
+    });
+
+    const stations = await response.json();
+    console.log(`Found ${stations.length} stations`);
+    
+    res.json({ success: true, count: stations.length, stations });
+
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Failed to fetch stations', details: error.message });
+  }
+});
+
+// ============================================
+// CHARGING STATIONS ALONG ROUTE
+// ============================================
+app.post('/api/charging-stations-along-route', async (req, res) => {
+  try {
+    const { points, distance = 5, countrycode = 'GB', levelid } = req.body;
+
+    if (!points || points.length === 0) {
+      return res.status(400).json({ error: 'Missing points array' });
+    }
+
+    // Sample every 10th point
     const sampleInterval = Math.max(1, Math.floor(points.length / 10));
     const sampledPoints = points.filter((_, i) => i % sampleInterval === 0);
     
-    console.log(`Searching for stations at ${sampledPoints.length} points along route...`);
+    console.log(`Searching ${sampledPoints.length} points along route...`);
     
-    // Fetch stations near each sampled point
-    const allStations = new Map(); // Use Map to deduplicate by ID
+    const allStations = new Map();
     
     for (const point of sampledPoints) {
       let url = `https://api.openchargemap.io/v3/poi/?output=json&compact=true&verbose=false`;
-      url += `&latitude=${point.lat}`;
-      url += `&longitude=${point.lng}`;
-      url += `&distance=${distance}`;
-      url += `&distanceunit=KM`;
-      url += `&maxresults=20`;
+      url += `&latitude=${point.lat}&longitude=${point.lng}`;
+      url += `&distance=${distance}&distanceunit=KM&maxresults=20`;
       url += `&countrycode=${countrycode}`;
-      
       if (levelid) url += `&levelid=${levelid}`;
-
-      const ocmKey = process.env.OPEN_CHARGE_MAP_API_KEY;
-      if (ocmKey) url += `&key=${ocmKey}`;
 
       try {
         const response = await fetch(url, {
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'WattRoute/2.0'
-          }
+          headers: { 'User-Agent': 'WattRoute/2.0' }
         });
         
         if (response.ok) {
           const stations = await response.json();
-          stations.forEach(station => {
-            if (station.ID) {
-              allStations.set(station.ID, station);
-            }
-          });
+          stations.forEach(s => { if (s.ID) allStations.set(s.ID, s); });
         }
       } catch (e) {
-        console.warn('Failed to fetch stations for point:', e.message);
+        console.warn('Point fetch failed:', e.message);
       }
       
-      // Small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(r => setTimeout(r, 100)); // Rate limit
     }
 
     const uniqueStations = Array.from(allStations.values());
-    console.log(`Found ${uniqueStations.length} unique charging stations along route`);
+    console.log(`Found ${uniqueStations.length} unique stations`);
     
-    res.json({
-      success: true,
-      count: uniqueStations.length,
-      stations: uniqueStations
-    });
+    res.json({ success: true, count: uniqueStations.length, stations: uniqueStations });
 
   } catch (error) {
-    console.error('Error fetching charging stations along route:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch charging stations along route', 
-      details: error.message 
-    });
-  }
-});
-
-// ===========================================
-// GEOCODE ENDPOINT (bonus - for address lookup)
-// ===========================================
-app.get('/api/geocode', async (req, res) => {
-  try {
-    const { address } = req.query;
-    
-    if (!address) {
-      return res.status(400).json({ error: 'Missing address parameter' });
-    }
-
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: 'Google Maps API key not configured' });
-    }
-
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`;
-    const response = await fetch(url);
-    const data = await response.json();
-
-    if (data.status !== 'OK') {
-      return res.status(400).json({ 
-        error: `Geocoding failed: ${data.status}`,
-        details: data.error_message 
-      });
-    }
-
-    res.json({
-      success: true,
-      results: data.results
-    });
-
-  } catch (error) {
-    console.error('Error geocoding:', error);
-    res.status(500).json({ error: 'Geocoding failed', details: error.message });
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Failed to fetch stations', details: error.message });
   }
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`
-╔═══════════════════════════════════════════════════════════╗
-║                                                           ║
-║   ⚡ WattRoute Backend v2.0 is running!                  ║
-║                                                           ║
-║   Port: ${PORT}                                              ║
-║   Health: http://localhost:${PORT}/health                    ║
-║                                                           ║
-║   Endpoints:                                              ║
-║   • POST /api/directions          - Get route from Google║
-║   • GET  /api/charging-stations   - Get nearby stations  ║
-║   • POST /api/charging-stations-along-route              ║
-║   • GET  /api/geocode             - Address lookup       ║
-║                                                           ║
-╚═══════════════════════════════════════════════════════════╝
-  `);
+  console.log(`WattRoute Backend v2.1 running on port ${PORT}`);
 });
